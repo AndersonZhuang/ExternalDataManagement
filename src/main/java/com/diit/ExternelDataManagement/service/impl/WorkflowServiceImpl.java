@@ -4,6 +4,7 @@ import com.diit.ExternelDataManagement.config.SchedulerConfig;
 import com.diit.ExternelDataManagement.service.WorkflowService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,11 +28,17 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public Long startWorkflow() {
+        return startWorkflow(null);
+    }
+
+    @Override
+    public Long startWorkflow(String initParams) {
         try {
             // 记录配置信息
             logger.info("调度服务配置信息:");
             logger.info("  Base URL: {}", schedulerConfig.getBaseUrl());
             logger.info("  Workflow ID: {}", schedulerConfig.getWorkflowId());
+            logger.info("  Init Params: {}", initParams != null ? initParams : "未提供");
 
             // 构建完整URL
             String url = schedulerConfig.getBaseUrl() + "/api/workflow/" + schedulerConfig.getWorkflowId() + "/run";
@@ -43,7 +50,7 @@ public class WorkflowServiceImpl implements WorkflowService {
             logger.debug("请求头设置: Content-Type = application/json");
 
             // 准备请求体
-            String requestBody = "{}";
+            String requestBody = buildRequestBody(initParams);
             HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
             logger.debug("请求体: {}", requestBody);
 
@@ -75,6 +82,30 @@ public class WorkflowServiceImpl implements WorkflowService {
             logger.error("工作流API调用异常: ", e);
             logger.error("异常详细信息: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * 构建请求体
+     * @param initParams 初始化参数，允许为null
+     * @return JSON格式的请求体字符串
+     */
+    private String buildRequestBody(String initParams) {
+        try {
+            ObjectNode requestJson = objectMapper.createObjectNode();
+            
+            if (initParams != null && !initParams.trim().isEmpty()) {
+                requestJson.put("initParams", initParams);
+                logger.debug("添加initParams到请求体: {}", initParams);
+            } else {
+                requestJson.put("initParams", "");
+                logger.debug("initParams为空，使用默认空字符串");
+            }
+            
+            return objectMapper.writeValueAsString(requestJson);
+        } catch (Exception e) {
+            logger.error("构建请求体异常: ", e);
+            return "{\"initParams\": \"\"}";
         }
     }
 }

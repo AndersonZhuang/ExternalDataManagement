@@ -41,4 +41,20 @@ public class DataController {
         List<FileEntity> parsedFiles = fileService.parseAndSaveFiles(receiveCode);
         return APIResponse.ok(parsedFiles);
     }
+
+    @PostMapping("/restart-quality-check/{id}")
+    @Operation(summary = "重新质检", description = "根据数据包ID重新启动质检任务，生成新的工作流实例")
+    public APIResponse<DataEntity> restartQualityCheck(
+            @Parameter(description = "数据包ID", required = true, example = "data-001")
+            @PathVariable String id) {
+        DataEntity updatedData = dataService.restartQualityCheck(id);
+        return APIResponse.ok(updatedData);
+    }
+
+    @PostMapping("/sync-quality-status")
+    @Operation(summary = "同步质检状态", description = "查询所有质检中的记录，同步工作流状态到质检状态，返回详细的同步结果")
+    public APIResponse<com.diit.ExternelDataManagement.pojo.SyncStatusResult> syncQualityStatus() {
+        com.diit.ExternelDataManagement.pojo.SyncStatusResult result = dataService.syncQualityCheckStatus();
+        return APIResponse.ok(result);
+    }
 }

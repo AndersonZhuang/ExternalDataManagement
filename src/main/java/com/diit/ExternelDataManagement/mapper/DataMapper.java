@@ -3,6 +3,8 @@ package com.diit.ExternelDataManagement.mapper;
 import com.diit.ExternelDataManagement.pojo.DataEntity;
 import org.apache.ibatis.annotations.*;
 
+import java.util.List;
+
 @Mapper
 public interface DataMapper {
 
@@ -31,4 +33,27 @@ public interface DataMapper {
 
     @Select("SELECT COUNT(*) FROM receive_external_package_info WHERE receive_code = #{receiveCode}")
     int existsByReceiveCode(@Param("receiveCode") String receiveCode);
+
+    @Update("UPDATE receive_external_package_info SET instance_id = #{instanceId} WHERE id = #{id}")
+    int updateInstanceId(@Param("id") String id, @Param("instanceId") String instanceId);
+
+    @Update("UPDATE receive_external_package_info SET instance_id = #{instanceId}, quality_status = #{qualityStatus}, receive_status = #{receiveStatus} WHERE id = #{id}")
+    int updateInstanceIdAndStatus(@Param("id") String id,
+                                   @Param("instanceId") String instanceId,
+                                   @Param("qualityStatus") String qualityStatus,
+                                   @Param("receiveStatus") String receiveStatus);
+
+    @Select("SELECT id, receive_code, receive_time, quality_status, receive_status, instance_id FROM receive_external_package_info WHERE quality_status = '质检中'")
+    @Results({
+        @Result(property = "id", column = "id"),
+        @Result(property = "receiveCode", column = "receive_code"),
+        @Result(property = "receiveTime", column = "receive_time"),
+        @Result(property = "qualityStatus", column = "quality_status"),
+        @Result(property = "receiveStatus", column = "receive_status"),
+        @Result(property = "instanceId", column = "instance_id")
+    })
+    List<DataEntity> findAllInQualityCheck();
+
+    @Update("UPDATE receive_external_package_info SET quality_status = #{qualityStatus} WHERE instance_id = #{instanceId}")
+    int updateQualityStatusByInstanceId(@Param("instanceId") String instanceId, @Param("qualityStatus") String qualityStatus);
 }

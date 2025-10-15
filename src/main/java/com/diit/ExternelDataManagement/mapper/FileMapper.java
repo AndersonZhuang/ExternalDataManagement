@@ -30,4 +30,15 @@ public interface FileMapper {
         @Result(property = "layerName", column = "layer_name")
     })
     List<FileEntity> findByReceiveCode(@Param("receiveCode") String receiveCode);
+
+    @Select("SELECT file_path FROM external_data_info WHERE id = #{id}")
+    String getFilePathById(@Param("id") String id);
+
+    @Select("<script>" +
+            "SELECT file_path FROM external_data_info WHERE id IN " +
+            "<foreach item='id' collection='ids' open='(' separator=',' close=')'>" +
+            "#{id}" +
+            "</foreach>" +
+            "</script>")
+    List<String> getFilePathsByIds(@Param("ids") List<String> ids);
 }
