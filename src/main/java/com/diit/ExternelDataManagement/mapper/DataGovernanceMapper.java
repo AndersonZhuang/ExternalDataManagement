@@ -22,6 +22,9 @@ public interface DataGovernanceMapper {
     })
     DataGovernanceEntity findById(@Param("id") String id);
 
+    @Select("SELECT data_code FROM data_governance_info WHERE id = #{id}")
+    String getDataCodeById(@Param("id") String id);
+
     @Update("UPDATE data_governance_info SET receive_code = #{receiveCode}, task_receive_time = #{taskReceiveTime}, governance_status = #{governanceStatus} WHERE id = #{id}")
     int updateGovernanceInfo(@Param("id") String id,
                            @Param("receiveCode") String receiveCode,

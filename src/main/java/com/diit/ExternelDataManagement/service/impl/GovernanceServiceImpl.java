@@ -23,9 +23,11 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class GovernanceServiceImpl implements GovernanceService {
@@ -49,34 +51,54 @@ public class GovernanceServiceImpl implements GovernanceService {
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Override
-    public Object startGovernanceTask(List<String> ids, int workflowId) {
-        logger.info("启动治理任务，数据代码列表: {}, 工作流ID: {}", ids, workflowId);
+    public Object startGovernanceTask(String id, int workflowId) {
+        logger.info("启动治理任务，治理记录ID: {}, 工作流ID: {}", id, workflowId);
         
-        if (ids == null || ids.isEmpty()) {
-            throw new IllegalArgumentException("数据代码列表不能为空");
+        if (id == null || id.trim().isEmpty()) {
+            throw new IllegalArgumentException("治理记录ID不能为空");
         }
         
         // 1. 检查data_governance_info表中对应记录是否存在
-        int existingCount = dataGovernanceMapper.countByDataCodes(ids);
-        if (existingCount != ids.size()) {
-            logger.error("部分治理记录不存在，期望: {}, 实际: {}", ids.size(), existingCount);
-            throw new DataNotFoundException("部分数据代码在治理信息表中不存在");
+        DataGovernanceEntity governanceEntity = dataGovernanceMapper.findById(id);
+        if (governanceEntity == null) {
+            logger.error("治理记录不存在，ID: {}", id);
+            throw new DataNotFoundException("治理记录不存在，ID: " + id);
         }
-        logger.info("治理记录存在确认，数据代码数量: {}", ids.size());
+        logger.info("治理记录存在确认，ID: {}", id);
         
-        // 2. 根据ids从external_data_info表中获取file_path
-        List<String> filePaths = fileMapper.getFilePathsByIds(ids);
+        // 2. 获取data_code字段（逗号分隔的字符串）
+        String dataCodeStr = governanceEntity.getDataCode();
+        if (dataCodeStr == null || dataCodeStr.trim().isEmpty()) {
+            logger.error("data_code字段为空，ID: {}", id);
+            throw new RuntimeException("data_code字段为空，ID: " + id);
+        }
+        logger.info("获取到data_code字符串: {}", dataCodeStr);
+        
+        // 3. 解析data_code字符串为数组
+        List<String> dataCodes = Arrays.stream(dataCodeStr.split(","))
+                .map(String::trim)
+                .filter(code -> !code.isEmpty())
+                .collect(Collectors.toList());
+        logger.info("解析出的数据代码列表: {}", dataCodes);
+        
+        if (dataCodes.isEmpty()) {
+            logger.error("解析后的数据代码列表为空，ID: {}", id);
+            throw new RuntimeException("解析后的数据代码列表为空，ID: " + id);
+        }
+        
+        // 4. 根据dataCodes从external_data_info表中获取file_path
+        List<String> filePaths = fileMapper.getFilePathsByIds(dataCodes);
         if (filePaths == null || filePaths.isEmpty()) {
-            logger.error("未找到任何文件路径，数据代码: {}", ids);
+            logger.error("未找到任何文件路径，数据代码: {}", dataCodes);
             throw new DataNotFoundException("未找到对应的文件路径");
         }
         logger.info("获取到文件路径数量: {}, 路径: {}", filePaths.size(), filePaths);
         
-        // 3. 构造工作流启动参数 {"args": [file_path1, file_path2, ...]}
+        // 5. 构造工作流启动参数 {"args": [file_path1, file_path2, ...]}
         String workflowInitParams = buildWorkflowArgs(filePaths);
         logger.info("构造的工作流参数: {}", workflowInitParams);
         
-        // 4. 启动工作流
+        // 6. 启动工作流
         Long instanceId = workflowService.startWorkflow(workflowInitParams);
         if (instanceId == null) {
             logger.error("工作流启动失败");
@@ -84,24 +106,25 @@ public class GovernanceServiceImpl implements GovernanceService {
         }
         logger.info("工作流启动成功，实例ID: {}", instanceId);
         
-        // 5. 更新data_governance_info表中对应data_code记录的task_id和task_receive_time字段
+        // 7. 更新data_governance_info表中对应记录的task_id和task_receive_time字段
         LocalDateTime taskReceiveTime = LocalDateTime.now();
-        int updatedCount = dataGovernanceMapper.updateTaskIdByDataCodes(ids, String.valueOf(instanceId), taskReceiveTime);
-        if (updatedCount != ids.size()) {
-            logger.warn("部分记录的task_id和task_receive_time更新失败，期望: {}, 实际: {}", ids.size(), updatedCount);
+        int updatedCount = dataGovernanceMapper.updateTaskIdByDataCodes(dataCodes, String.valueOf(instanceId), taskReceiveTime);
+        if (updatedCount != dataCodes.size()) {
+            logger.warn("部分记录的task_id和task_receive_time更新失败，期望: {}, 实际: {}", dataCodes.size(), updatedCount);
         } else {
             logger.info("✔️  所有记录的task_id和task_receive_time更新成功，任务接收时间: {}", taskReceiveTime);
         }
         
-        // 6. 返回结果
+        // 8. 返回结果
         Map<String, Object> result = new HashMap<>();
         result.put("instanceId", instanceId);
-        result.put("dataCodes", ids);
+        result.put("governanceId", id);
+        result.put("dataCodes", dataCodes);
         result.put("filePaths", filePaths);
         result.put("updatedCount", updatedCount);
         result.put("taskReceiveTime", taskReceiveTime);
         
-        logger.info("✔️  治理任务启动完成，实例ID: {}, 处理数据代码数量: {}", instanceId, ids.size());
+        logger.info("✔️  治理任务启动完成，实例ID: {}, 治理记录ID: {}, 处理数据代码数量: {}", instanceId, id, dataCodes.size());
         return result;
     }
 
