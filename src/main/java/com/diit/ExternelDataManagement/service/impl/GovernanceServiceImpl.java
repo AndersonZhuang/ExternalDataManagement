@@ -106,13 +106,14 @@ public class GovernanceServiceImpl implements GovernanceService {
         }
         logger.info("工作流启动成功，实例ID: {}", instanceId);
         
-        // 7. 更新data_governance_info表中对应记录的task_id和task_receive_time字段
+        // 7. 更新data_governance_info表中对应记录的task_id、task_receive_time和governance_status字段
         LocalDateTime taskReceiveTime = LocalDateTime.now();
-        int updatedCount = dataGovernanceMapper.updateTaskIdByDataCodes(dataCodes, String.valueOf(instanceId), taskReceiveTime);
-        if (updatedCount != dataCodes.size()) {
-            logger.warn("部分记录的task_id和task_receive_time更新失败，期望: {}, 实际: {}", dataCodes.size(), updatedCount);
+        int updatedCount = dataGovernanceMapper.updateTaskIdAndStatusById(
+            id, String.valueOf(instanceId), taskReceiveTime, "治理中");
+        if (updatedCount != 1) {
+            logger.warn("治理记录的task_id、task_receive_time和governance_status更新失败，ID: {}", id);
         } else {
-            logger.info("✔️  所有记录的task_id和task_receive_time更新成功，任务接收时间: {}", taskReceiveTime);
+            logger.info("✔️  治理记录的task_id、task_receive_time和governance_status更新成功，ID: {}，任务接收时间: {}，状态: 治理中", id, taskReceiveTime);
         }
         
         // 8. 返回结果
@@ -207,11 +208,12 @@ public class GovernanceServiceImpl implements GovernanceService {
         
         // 2. 遍历每条记录，查询工作流实例状态并更新时间
         for (DataGovernanceEntity entity : governanceList) {
+            String id = entity.getId();
             String dataCode = entity.getDataCode();
             String taskId = entity.getTaskId();
-            
-            logger.info("处理第 {} 条记录，data_code: {}, task_id: {}", 
-                       governanceList.indexOf(entity) + 1, dataCode, taskId);
+
+            logger.info("处理第 {} 条记录，id: {}, data_code: {}, task_id: {}",
+                       governanceList.indexOf(entity) + 1, id, dataCode, taskId);
             
             try {
                 // 3. 调用9030端口API查询工作流实例信息
@@ -223,28 +225,36 @@ public class GovernanceServiceImpl implements GovernanceService {
                     continue;
                 }
                 
-                logger.info("工作流实例信息 - actualTriggerTime: {}, finishedTime: {}, status: {}", 
-                           workflowInstance.getActualTriggerTime(), 
+                logger.info("工作流实例信息 - actualTriggerTime: {}, finishedTime: {}, status: {}",
+                           workflowInstance.getActualTriggerTime(),
                            workflowInstance.getFinishedTime(),
                            workflowInstance.getStatus());
-                
+
                 // 4. 解析时间并更新到数据库
                 LocalDateTime governanceStartTime = parseDateTime(workflowInstance.getActualTriggerTime());
                 LocalDateTime governanceEndTime = parseDateTime(workflowInstance.getFinishedTime());
+
+                logger.info("解析后的时间 - governanceStartTime: {}, governanceEndTime: {}",
+                           governanceStartTime, governanceEndTime);
                 
                 if (governanceStartTime != null || governanceEndTime != null) {
-                    int updated = dataGovernanceMapper.updateGovernanceTimesByDataCode(
-                        dataCode, governanceStartTime, governanceEndTime);
-                    
+                    logger.info("准备更新数据库 - id: {}, startTime: {}, endTime: {}",
+                               id, governanceStartTime, governanceEndTime);
+
+                    int updated = dataGovernanceMapper.updateGovernanceTimesById(
+                        id, governanceStartTime, governanceEndTime);
+
+                    logger.info("数据库更新结果 - 影响行数: {}", updated);
+
                     if (updated > 0) {
                         updatedCount++;
-                        logger.info("✔️  成功更新治理时间，data_code: {}", dataCode);
+                        logger.info("✔️  成功更新治理时间，id: {}, 影响行数: {}", id, updated);
                     } else {
-                        logger.error("❌ 更新治理时间失败，data_code: {}", dataCode);
+                        logger.error("❌ 更新治理时间失败，id: {}，影响行数为0，请检查该id是否存在于数据库中", id);
                         failedCount++;
                     }
                 } else {
-                    logger.warn("⏳ 时间信息无效，跳过更新，data_code: {}", dataCode);
+                    logger.warn("⏳ 时间信息无效，跳过更新，id: {}", id);
                     skippedCount++;
                 }
                 

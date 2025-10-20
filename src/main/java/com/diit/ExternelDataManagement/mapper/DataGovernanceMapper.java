@@ -37,14 +37,15 @@ public interface DataGovernanceMapper {
                               @Param("taskReceiveTime") LocalDateTime taskReceiveTime);
 
     @Update("<script>" +
-            "UPDATE data_governance_info SET task_id = #{taskId}, task_receive_time = #{taskReceiveTime} WHERE data_code IN " +
+            "UPDATE data_governance_info SET task_id = #{taskId}, task_receive_time = #{taskReceiveTime}, governance_status = #{governanceStatus} WHERE data_code IN " +
             "<foreach item='dataCode' collection='dataCodes' open='(' separator=',' close=')'>" +
             "#{dataCode}" +
             "</foreach>" +
             "</script>")
-    int updateTaskIdByDataCodes(@Param("dataCodes") List<String> dataCodes, 
-                               @Param("taskId") String taskId, 
-                               @Param("taskReceiveTime") LocalDateTime taskReceiveTime);
+    int updateTaskIdAndStatusByDataCodes(@Param("dataCodes") List<String> dataCodes,
+                                         @Param("taskId") String taskId,
+                                         @Param("taskReceiveTime") LocalDateTime taskReceiveTime,
+                                         @Param("governanceStatus") String governanceStatus);
 
     @Select("SELECT COUNT(*) FROM data_governance_info WHERE id = #{id}")
     int existsById(@Param("id") String id);
@@ -60,8 +61,9 @@ public interface DataGovernanceMapper {
             "</script>")
     int countByDataCodes(@Param("dataCodes") List<String> dataCodes);
 
-    @Select("SELECT data_code, task_id, governance_status FROM data_governance_info WHERE task_id IS NOT NULL AND task_id != '' AND governance_status = '治理中'")
+    @Select("SELECT id, data_code, task_id, governance_status FROM data_governance_info WHERE task_id IS NOT NULL AND task_id != '' AND governance_status = '治理中'")
     @Results({
+        @Result(property = "id", column = "id"),
         @Result(property = "dataCode", column = "data_code"),
         @Result(property = "taskId", column = "task_id"),
         @Result(property = "governanceStatus", column = "governance_status")
@@ -72,4 +74,15 @@ public interface DataGovernanceMapper {
     int updateGovernanceTimesByDataCode(@Param("dataCode") String dataCode,
                                        @Param("governanceStartTime") LocalDateTime governanceStartTime,
                                        @Param("governanceEndTime") LocalDateTime governanceEndTime);
+
+    @Update("UPDATE data_governance_info SET governance_start_time = #{governanceStartTime}, governance_end_time = #{governanceEndTime} WHERE id = #{id}")
+    int updateGovernanceTimesById(@Param("id") String id,
+                                  @Param("governanceStartTime") LocalDateTime governanceStartTime,
+                                  @Param("governanceEndTime") LocalDateTime governanceEndTime);
+
+    @Update("UPDATE data_governance_info SET task_id = #{taskId}, task_receive_time = #{taskReceiveTime}, governance_status = #{governanceStatus} WHERE id = #{id}")
+    int updateTaskIdAndStatusById(@Param("id") String id,
+                                   @Param("taskId") String taskId,
+                                   @Param("taskReceiveTime") LocalDateTime taskReceiveTime,
+                                   @Param("governanceStatus") String governanceStatus);
 }
