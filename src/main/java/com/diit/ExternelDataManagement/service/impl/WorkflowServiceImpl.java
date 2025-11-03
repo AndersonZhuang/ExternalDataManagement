@@ -33,15 +33,27 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     @Override
     public Long startWorkflow(String initParams) {
+        return startWorkflow(initParams, null);
+    }
+
+    @Override
+    public Long startWorkflow(String initParams, String workflowId) {
         try {
+            // 确定使用的工作流ID：优先使用传入的workflowId，否则使用配置文件中的默认值
+            String actualWorkflowId = (workflowId != null && !workflowId.trim().isEmpty()) 
+                ? workflowId.trim() 
+                : schedulerConfig.getWorkflowId();
+            
             // 记录配置信息
             logger.info("调度服务配置信息:");
             logger.info("  Base URL: {}", schedulerConfig.getBaseUrl());
-            logger.info("  Workflow ID: {}", schedulerConfig.getWorkflowId());
+            logger.info("  传入的 Workflow ID: {}", workflowId);
+            logger.info("  实际使用的 Workflow ID: {}", actualWorkflowId);
+            logger.info("  配置文件默认 Workflow ID: {}", schedulerConfig.getWorkflowId());
             logger.info("  Init Params: {}", initParams != null ? initParams : "未提供");
 
             // 构建完整URL
-            String url = schedulerConfig.getBaseUrl() + "/api/workflow/" + schedulerConfig.getWorkflowId() + "/run";
+            String url = schedulerConfig.getBaseUrl() + "/api/workflow/" + actualWorkflowId + "/run";
             logger.info("构建的完整URL: {}", url);
 
             // 准备请求头

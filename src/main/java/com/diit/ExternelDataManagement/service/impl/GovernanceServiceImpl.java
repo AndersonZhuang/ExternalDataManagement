@@ -98,13 +98,13 @@ public class GovernanceServiceImpl implements GovernanceService {
         String workflowInitParams = buildWorkflowArgs(filePaths);
         logger.info("构造的工作流参数: {}", workflowInitParams);
         
-        // 6. 启动工作流
-        Long instanceId = workflowService.startWorkflow(workflowInitParams);
+        // 6. 启动工作流，使用前端传入的工作流ID
+        Long instanceId = workflowService.startWorkflow(workflowInitParams, String.valueOf(workflowId));
         if (instanceId == null) {
-            logger.error("工作流启动失败");
-            throw new RuntimeException("工作流启动失败");
+            logger.error("工作流启动失败，工作流ID: {}", workflowId);
+            throw new RuntimeException("工作流启动失败，工作流ID: " + workflowId);
         }
-        logger.info("工作流启动成功，实例ID: {}", instanceId);
+        logger.info("工作流启动成功，工作流ID: {}, 实例ID: {}", workflowId, instanceId);
         
         // 7. 更新data_governance_info表中对应记录的task_id、task_receive_time和governance_status字段
         LocalDateTime taskReceiveTime = LocalDateTime.now();
