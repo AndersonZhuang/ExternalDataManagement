@@ -1,6 +1,7 @@
 package com.diit.ExternelDataManagement.controller;
 
 import com.diit.ExternelDataManagement.common.APIResponse;
+import com.diit.ExternelDataManagement.dto.CodeFilePathMappingDTO;
 import com.diit.ExternelDataManagement.pojo.SyncStatusResult;
 import com.diit.ExternelDataManagement.service.GovernanceService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -8,6 +9,8 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/governance")
@@ -37,6 +40,17 @@ public class GovernanceController {
     public APIResponse<SyncStatusResult> syncGovernanceStatus() {
         SyncStatusResult result = governanceService.syncGovernanceStatus();
         return APIResponse.ok(result);
+    }
+
+    @PostMapping("/code-filepath-mappings")
+    @Operation(summary = "批量查询code和filepath映射", 
+               description = "根据传入的code列表，批量查询对应的文件路径，返回code和filepath的映射关系列表。" +
+                           "适用于治理提交时需要根据数据源代码获取文件路径的场景。")
+    public APIResponse<List<CodeFilePathMappingDTO>> getCodeFilePathMappings(
+            @Parameter(description = "数据代码列表，支持批量查询", required = true)
+            @RequestBody List<String> codes) {
+        List<CodeFilePathMappingDTO> mappings = governanceService.getCodeFilePathMappings(codes);
+        return APIResponse.ok(mappings);
     }
 }
 

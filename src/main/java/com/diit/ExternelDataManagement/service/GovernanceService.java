@@ -1,6 +1,9 @@
 package com.diit.ExternelDataManagement.service;
 
+import com.diit.ExternelDataManagement.dto.CodeFilePathMappingDTO;
 import com.diit.ExternelDataManagement.pojo.SyncStatusResult;
+
+import java.util.List;
 
 public interface GovernanceService {
 
@@ -17,5 +20,12 @@ public interface GovernanceService {
      * @return 同步结果统计
      */
     SyncStatusResult syncGovernanceStatus();
+
+    /**
+     * 批量查询code和filepath的映射关系
+     * @param codes 数据代码列表
+     * @return code和filepath映射关系列表
+     */
+    List<CodeFilePathMappingDTO> getCodeFilePathMappings(List<String> codes);
 }
 

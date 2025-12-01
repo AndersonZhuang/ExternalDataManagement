@@ -80,6 +80,19 @@
 			<version>4.4.0</version>
 		</dependency>
 
+	<!-- SQLite JDBC 驱动 (用于 GDB 文件解析) -->
+	<dependency>
+		<groupId>org.xerial</groupId>
+		<artifactId>sqlite-jdbc</artifactId>
+		<version>3.44.1.0</version>
+	</dependency>
+	
+	<!-- Jackson JSON 处理 (用于 GeoJSON) -->
+	<dependency>
+		<groupId>com.fasterxml.jackson.core</groupId>
+		<artifactId>jackson-databind</artifactId>
+	</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
@@ -87,7 +100,40 @@
 		</dependency>
 	</dependencies>
 
+	<!-- GeoTools Maven 仓库 -->
+	<repositories>
+		<repository>
+			<id>osgeo</id>
+			<name>OSGeo Release Repository</name>
+			<url>https://repo.osgeo.org/repository/release/</url>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+			<releases>
+				<enabled>true</enabled>
+			</releases>
+		</repository>
+		<repository>
+			<id>central</id>
+			<name>Central Repository</name>
+			<url>https://repo1.maven.org/maven2</url>
+			<layout>default</layout>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+		</repository>
+	</repositories>
+
 	<build>
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>false</filtering>
+				<includes>
+					<include>**/*</include>
+				</includes>
+			</resource>
+		</resources>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>

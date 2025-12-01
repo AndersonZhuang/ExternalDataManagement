@@ -1,6 +1,7 @@
 package com.diit.ExternelDataManagement.service.impl;
 
 import com.diit.ExternelDataManagement.config.SchedulerConfig;
+import com.diit.ExternelDataManagement.dto.CodeFilePathMappingDTO;
 import com.diit.ExternelDataManagement.exception.DataNotFoundException;
 import com.diit.ExternelDataManagement.mapper.DataGovernanceMapper;
 import com.diit.ExternelDataManagement.mapper.FileMapper;
@@ -23,6 +24,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -326,6 +328,67 @@ public class GovernanceServiceImpl implements GovernanceService {
         } catch (Exception e) {
             logger.error("解析日期时间失败: {}", dateTimeString, e);
             return null;
+        }
+    }
+
+    @Override
+    public List<CodeFilePathMappingDTO> getCodeFilePathMappings(List<String> codes) {
+        logger.info("批量查询code和filepath映射，传入code数量: {}", codes != null ? codes.size() : 0);
+        
+        if (codes == null || codes.isEmpty()) {
+            logger.warn("传入的code列表为空");
+            return new ArrayList<>();
+        }
+        
+        // 过滤掉空字符串和null值
+        List<String> validCodes = codes.stream()
+                .filter(code -> code != null && !code.trim().isEmpty())
+                .map(String::trim)
+                .distinct()
+                .collect(Collectors.toList());
+        
+        if (validCodes.isEmpty()) {
+            logger.warn("过滤后的有效code列表为空");
+            return new ArrayList<>();
+        }
+        
+        logger.info("有效的code数量: {}, codes: {}", validCodes.size(), validCodes);
+        
+        try {
+            // 调用FileMapper进行批量查询
+            List<CodeFilePathMappingDTO> mappings = fileMapper.getCodeFilePathMappings(validCodes);
+            
+            if (mappings == null) {
+                logger.warn("查询返回结果为null");
+                return new ArrayList<>();
+            }
+            
+            logger.info("查询到的映射关系数量: {}", mappings.size());
+            
+            // 记录未找到映射关系的code
+            List<String> foundCodes = mappings.stream()
+                    .map(CodeFilePathMappingDTO::getCode)
+                    .collect(Collectors.toList());
+            
+            List<String> notFoundCodes = validCodes.stream()
+                    .filter(code -> !foundCodes.contains(code))
+                    .collect(Collectors.toList());
+            
+            if (!notFoundCodes.isEmpty()) {
+                logger.warn("以下code未找到对应的文件路径: {}", notFoundCodes);
+            }
+            
+            // 记录找到的映射关系
+            for (CodeFilePathMappingDTO mapping : mappings) {
+                logger.debug("映射关系: code={}, filePath={}", mapping.getCode(), mapping.getFilePath());
+            }
+            
+            logger.info("✔️ 批量查询code和filepath映射完成，返回 {} 条映射关系", mappings.size());
+            return mappings;
+            
+        } catch (Exception e) {
+            logger.error("批量查询code和filepath映射异常", e);
+            throw new RuntimeException("查询映射关系失败: " + e.getMessage(), e);
         }
     }
 }

@@ -6,6 +6,7 @@ public class FileEntity {
     private String receiveCode;
     private String filePath;
     private String dataType;
+    private String fileType;
     private String bbox;
     private String dataSize;
     private Integer totalObjectNum;
@@ -45,6 +46,14 @@ public class FileEntity {
 
     public void setDataType(String dataType) {
         this.dataType = dataType;
+    }
+
+    public String getFileType() {
+        return fileType;
+    }
+
+    public void setFileType(String fileType) {
+        this.fileType = fileType;
     }
 
     public String getBbox() {
@@ -94,6 +103,7 @@ public class FileEntity {
                 ", receiveCode='" + receiveCode + '\'' +
                 ", filePath='" + filePath + '\'' +
                 ", dataType='" + dataType + '\'' +
+                ", fileType='" + fileType + '\'' +
                 ", bbox='" + bbox + '\'' +
                 ", dataSize='" + dataSize + '\'' +
                 ", totalObjectNum=" + totalObjectNum +
