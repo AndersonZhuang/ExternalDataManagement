@@ -92,13 +92,16 @@ public class SimpleGeoParser {
             return parseGdbFile(normalizedPath);
         } else if (normalizedPath.toLowerCase().endsWith(".shp")) {
             return parseShapefileBasic(normalizedPath);
+        } else if (normalizedPath.toLowerCase().endsWith(".mdb")) {
+            return parseMdbFile(normalizedPath);
         } else {
-            throw new IOException("暂不支持的文件格式: " + filePath + "，当前支持 .gdb 和 .shp");
+            throw new IOException("暂不支持的文件格式: " + filePath + "，当前支持 .gdb、.shp 和 .mdb");
         }
     }
     
     /**
      * 解析 GDB 文件（通过 SQLite JDBC）
+     * 通过GDB_Items表识别真正的图层
      */
     private List<LayerInfo> parseGdbFile(String gdbPath) throws IOException {
         logger.info("解析 GDB 文件: {}", gdbPath);
@@ -106,7 +109,6 @@ public class SimpleGeoParser {
         List<LayerInfo> layers = new ArrayList<>();
         
         try {
-            // 查找 GDB 目录中的表文件
             Path gdbDir = Paths.get(gdbPath);
             logger.debug("GDB 目录路径: {}", gdbDir.toAbsolutePath());
             
@@ -118,6 +120,257 @@ public class SimpleGeoParser {
                 throw new IOException("路径不是目录: " + gdbPath);
             }
             
+            // 读取GDB目录表，获取真正的图层列表
+            List<GdbItem> gdbItems = readGdbItems(gdbDir);
+            logger.info("从GDB_Items表读取到 {} 个项目", gdbItems.size());
+            
+            if (gdbItems.isEmpty()) {
+                logger.warn("未找到任何图层项目，尝试备用方法...");
+                // 备用方法：遍历所有表文件
+                return parseGdbFileFallback(gdbPath);
+            }
+            
+            // 为每个图层项目创建LayerInfo
+            for (GdbItem item : gdbItems) {
+                LayerInfo layer = new LayerInfo();
+                
+                // 设置图层名称（已经过处理，去除了路径分隔符）
+                String layerName = item.name != null ? item.name.trim() : "未知图层";
+                layer.setLayerName(layerName);
+                layer.setFilePath(item.path);
+                
+                // 根据类型设置几何类型
+                String geometryType = determineGeometryTypeFromGdbType(item.type);
+                layer.setGeometryType(geometryType);
+                
+                // 尝试读取要素数量
+                int featureCount = getFeatureCountFromTable(gdbDir, item.uuid);
+                layer.setFeatureCount(featureCount);
+                
+                layer.setBbox(null);
+                layer.setTotalArea(0.0);
+                
+                layers.add(layer);
+                logger.info("解析图层: {} (类型: {}, UUID: {}) - {} 个要素", 
+                    layerName, item.type, item.uuid, featureCount);
+            }
+            
+            logger.info("GDB解析完成，共 {} 个图层", layers.size());
+            
+        } catch (Exception e) {
+            logger.error("解析 GDB 文件失败: {}", e.getMessage(), e);
+            throw new IOException("解析 GDB 文件失败: " + e.getMessage(), e);
+        }
+        
+        return layers;
+    }
+    
+    /**
+     * GDB项目信息
+     */
+    private static class GdbItem {
+        String uuid;
+        String name;
+        String type;
+        String path;
+    }
+    
+    /**
+     * 读取GDB_Items表，获取所有图层和表
+     */
+    private List<GdbItem> readGdbItems(Path gdbDir) {
+        List<GdbItem> items = new ArrayList<>();
+        
+        try {
+            // GDB目录表通常是 a00000001.gdbtable
+            Path catalogFile = gdbDir.resolve("a00000001.gdbtable");
+            if (!Files.exists(catalogFile)) {
+                logger.warn("未找到GDB目录表文件 a00000001.gdbtable");
+                return items;
+            }
+            
+            String sqlitePath = normalizePathForSqlite(catalogFile.toString());
+            String jdbcUrl = "jdbc:sqlite:" + sqlitePath;
+            logger.debug("连接GDB目录表: {}", jdbcUrl);
+            
+            try (Connection conn = DriverManager.getConnection(jdbcUrl);
+                 Statement stmt = conn.createStatement()) {
+                
+                // 查询GDB_Items表（这是GDB的标准目录表）
+                // GDB_Items表包含所有项目的元数据
+                String querySql = "SELECT UUID, Name, Type, Path FROM GDB_Items " +
+                                 "WHERE Type IN ('esriFeatureClass', 'esriTable', 'esriFeatureDataset') " +
+                                 "ORDER BY Name";
+                
+                try {
+                    ResultSet rs = stmt.executeQuery(querySql);
+                    while (rs.next()) {
+                        GdbItem item = new GdbItem();
+                        item.uuid = rs.getString("UUID");
+                        String rawName = rs.getString("Name");
+                        item.type = rs.getString("Type");
+                        item.path = rs.getString("Path");
+                        
+                        // 处理图层名称：GDB_Items表中的Name可能包含路径分隔符
+                        // 例如："\\图层名" 或 "数据集\\图层名"，需要提取最后的名称部分
+                        if (rawName != null) {
+                            // 移除开头的反斜杠和路径分隔符
+                            String cleanedName = rawName.trim();
+                            if (cleanedName.startsWith("\\")) {
+                                cleanedName = cleanedName.substring(1);
+                            }
+                            // 如果包含路径分隔符，取最后一部分
+                            if (cleanedName.contains("\\")) {
+                                String[] parts = cleanedName.split("\\\\");
+                                cleanedName = parts[parts.length - 1];
+                            }
+                            item.name = cleanedName;
+                        } else {
+                            item.name = null;
+                        }
+                        
+                        // 只处理用户图层和表，跳过系统表
+                        if (item.name != null && !item.name.isEmpty() && 
+                            !item.name.startsWith("GDB_") && 
+                            !item.name.startsWith("a0000000")) {
+                            items.add(item);
+                            logger.debug("发现图层/表: {} (UUID: {}, Type: {}, 原始名称: {})", 
+                                item.name, item.uuid, item.type, rawName);
+                        }
+                    }
+                    rs.close();
+                } catch (Exception e) {
+                    logger.warn("查询GDB_Items表失败，尝试查找其他表: {}", e.getMessage());
+                    // 如果GDB_Items表不存在，尝试查找其他可能的表名
+                    return readGdbItemsAlternative(stmt);
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("读取GDB_Items失败: {}", e.getMessage());
+            if (logger.isDebugEnabled()) {
+                logger.debug("读取GDB_Items异常详情", e);
+            }
+        }
+        
+        return items;
+    }
+    
+    /**
+     * 备用方法：尝试查找其他可能的目录表
+     */
+    private List<GdbItem> readGdbItemsAlternative(Statement stmt) {
+        List<GdbItem> items = new ArrayList<>();
+        
+        try {
+            // 查找所有表
+            ResultSet tables = stmt.executeQuery("SELECT name FROM sqlite_master WHERE type='table'");
+            while (tables.next()) {
+                String tableName = tables.getString("name");
+                logger.debug("发现表: {}", tableName);
+                
+                // 尝试查找包含Name和UUID字段的表
+                try {
+                    ResultSet columns = stmt.executeQuery(
+                        "PRAGMA table_info(\"" + tableName + "\")");
+                    boolean hasName = false;
+                    boolean hasUuid = false;
+                    boolean hasType = false;
+                    
+                    while (columns.next()) {
+                        String colName = columns.getString("name");
+                        if (colName.equalsIgnoreCase("Name")) hasName = true;
+                        if (colName.equalsIgnoreCase("UUID")) hasUuid = true;
+                        if (colName.equalsIgnoreCase("Type")) hasType = true;
+                    }
+                    columns.close();
+                    
+                    // 如果表有Name和UUID字段，尝试查询
+                    if (hasName && hasUuid) {
+                        String querySql = "SELECT UUID, Name" + 
+                                         (hasType ? ", Type" : ", '' as Type") + 
+                                         ", '' as Path FROM \"" + tableName + "\"";
+                        try {
+                            ResultSet rs = stmt.executeQuery(querySql);
+                            while (rs.next()) {
+                                String rawName = rs.getString("Name");
+                                if (rawName != null && !rawName.startsWith("GDB_") && 
+                                    !rawName.startsWith("a0000000")) {
+                                    // 处理图层名称
+                                    String cleanedName = rawName.trim();
+                                    if (cleanedName.startsWith("\\")) {
+                                        cleanedName = cleanedName.substring(1);
+                                    }
+                                    if (cleanedName.contains("\\")) {
+                                        String[] parts = cleanedName.split("\\\\");
+                                        cleanedName = parts[parts.length - 1];
+                                    }
+                                    
+                                    if (!cleanedName.isEmpty()) {
+                                        GdbItem item = new GdbItem();
+                                        item.uuid = rs.getString("UUID");
+                                        item.name = cleanedName;
+                                        item.type = hasType ? rs.getString("Type") : "Unknown";
+                                        item.path = "";
+                                        items.add(item);
+                                        logger.debug("备用方法发现图层/表: {} (UUID: {})", 
+                                            item.name, item.uuid);
+                                    }
+                                }
+                            }
+                            rs.close();
+                        } catch (Exception e) {
+                            logger.debug("查询表 {} 失败: {}", tableName, e.getMessage());
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.debug("检查表 {} 结构失败: {}", tableName, e.getMessage());
+                }
+            }
+            tables.close();
+        } catch (Exception e) {
+            logger.warn("备用方法读取失败: {}", e.getMessage());
+        }
+        
+        return items;
+    }
+    
+    /**
+     * 根据GDB类型确定几何类型
+     */
+    private String determineGeometryTypeFromGdbType(String gdbType) {
+        if (gdbType == null) {
+            return "Unknown";
+        }
+        
+        switch (gdbType) {
+            case "esriFeatureClass":
+                return "Feature Class";
+            case "esriTable":
+                return "Table";
+            case "esriFeatureDataset":
+                return "Feature Dataset";
+            default:
+                return gdbType;
+        }
+    }
+    
+    /**
+     * 根据UUID获取要素数量
+     */
+    private int getFeatureCountFromTable(Path gdbDir, String uuid) {
+        if (uuid == null || uuid.isEmpty()) {
+            return 0;
+        }
+        
+        try {
+            // UUID格式通常是 {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+            // 需要转换为表文件名格式 a00000001.gdbtable
+            // 这里简化处理：尝试查找对应的表文件
+            
+            // 先尝试直接通过UUID查找表文件（如果UUID包含表ID信息）
+            // 或者遍历所有表文件，查找包含该UUID的表
+            
+            // 查找所有表文件
             List<Path> tableFiles = Files.walk(gdbDir)
                     .filter(Files::isRegularFile)
                     .filter(path -> {
@@ -126,17 +379,81 @@ public class SimpleGeoParser {
                     })
                     .collect(Collectors.toList());
             
-            logger.info("发现 {} 个 GDB 表文件", tableFiles.size());
-            
-            if (tableFiles.isEmpty()) {
-                logger.warn("未找到任何 GDB 表文件，目录可能不是有效的 GDB 格式: {}", gdbPath);
-                throw new IOException("未找到任何 GDB 表文件: " + gdbPath);
+            // 尝试在每个表文件中查找记录
+            for (Path tableFile : tableFiles) {
+                try {
+                    String sqlitePath = normalizePathForSqlite(tableFile.toString());
+                    String jdbcUrl = "jdbc:sqlite:" + sqlitePath;
+                    
+                    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+                         Statement stmt = conn.createStatement()) {
+                        
+                        // 查询所有表
+                        ResultSet tables = stmt.executeQuery("SELECT name FROM sqlite_master WHERE type='table'");
+                        while (tables.next()) {
+                            String tableName = tables.getString("name");
+                            if (tableName.startsWith("sqlite_") || tableName.startsWith("rtree_")) {
+                                continue;
+                            }
+                            
+                            try {
+                                ResultSet countRs = stmt.executeQuery("SELECT COUNT(*) FROM \"" + tableName + "\"");
+                                if (countRs.next()) {
+                                    int count = countRs.getInt(1);
+                                    countRs.close();
+                                    tables.close();
+                                    return count;
+                                }
+                                countRs.close();
+                            } catch (Exception e) {
+                                // 继续尝试下一个表
+                            }
+                        }
+                        tables.close();
+                    }
+                } catch (Exception e) {
+                    // 继续尝试下一个文件
+                }
             }
+        } catch (Exception e) {
+            logger.debug("获取要素数量失败: {}", e.getMessage());
+        }
+        
+        return 0;
+    }
+    
+    /**
+     * 备用解析方法：如果无法读取GDB_Items，使用原来的方法
+     */
+    private List<LayerInfo> parseGdbFileFallback(String gdbPath) throws IOException {
+        logger.info("使用备用方法解析GDB文件");
+        List<LayerInfo> layers = new ArrayList<>();
+        
+        try {
+            Path gdbDir = Paths.get(gdbPath);
             
-            // 尝试通过 SQLite 读取 GDB 元数据
+            List<Path> tableFiles = Files.walk(gdbDir)
+                    .filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String fileName = path.getFileName().toString().toLowerCase();
+                        return fileName.startsWith("a") && fileName.matches("a[0-9]{8}\\.gdbtable");
+                    })
+                    .collect(Collectors.toList());
+            
+            logger.info("发现 {} 个GDB表文件（备用方法）", tableFiles.size());
+            
+            // 过滤掉系统表（通常是a00000001）
+            tableFiles = tableFiles.stream()
+                    .filter(path -> {
+                        String fileName = path.getFileName().toString().toLowerCase();
+                        return !fileName.equals("a00000001.gdbtable");
+                    })
+                    .collect(Collectors.toList());
+            
+            logger.info("过滤后剩余 {} 个表文件", tableFiles.size());
+            
             Map<String, LayerMetadata> layerMetadataMap = readGdbMetadata(gdbPath);
             
-            // 为每个表文件创建图层信息
             for (int i = 0; i < tableFiles.size(); i++) {
                 Path tableFile = tableFiles.get(i);
                 String fileName = tableFile.getFileName().toString();
@@ -144,7 +461,6 @@ public class SimpleGeoParser {
                 
                 LayerInfo layer = new LayerInfo();
                 
-                // 尝试获取真实的图层信息
                 LayerMetadata metadata = layerMetadataMap.get(tableId);
                 if (metadata != null) {
                     layer.setLayerName(metadata.name);
@@ -152,24 +468,22 @@ public class SimpleGeoParser {
                     layer.setGeometryType(metadata.geometryType);
                 } else {
                     layer.setLayerName("图层_" + (i + 1));
-                    // 基于文件大小估算要素数量
                     long fileSize = Files.size(tableFile);
-                    int estimatedCount = Math.max(1, (int) (fileSize / 512)); // 粗略估计
+                    int estimatedCount = Math.max(1, (int) (fileSize / 512));
                     layer.setFeatureCount(estimatedCount);
                     layer.setGeometryType("Unknown");
                 }
                 
-                layer.setFilePath(tableFile.toString()); // 使用单个表文件路径，而不是整个 GDB 目录
+                layer.setFilePath(tableFile.toString());
                 layer.setBbox(null);
                 layer.setTotalArea(0.0);
                 
                 layers.add(layer);
                 logger.info("解析图层: {} - {} 个要素", layer.getLayerName(), layer.getFeatureCount());
             }
-            
         } catch (Exception e) {
-            logger.error("解析 GDB 文件失败: {}", e.getMessage(), e);
-            throw new IOException("解析 GDB 文件失败: " + e.getMessage(), e);
+            logger.error("备用方法解析失败: {}", e.getMessage(), e);
+            throw new IOException("解析GDB文件失败: " + e.getMessage(), e);
         }
         
         return layers;
@@ -414,6 +728,143 @@ public class SimpleGeoParser {
         } catch (Exception e) {
             logger.error("解析 Shapefile 失败: {}", e.getMessage(), e);
             throw new IOException("解析 Shapefile 失败: " + e.getMessage(), e);
+        }
+        
+        return layers;
+    }
+    
+    /**
+     * 解析 MDB 文件（Personal Geodatabase）
+     * MDB是Microsoft Access数据库格式，Personal Geodatabase使用Access存储地理数据
+     */
+    private List<LayerInfo> parseMdbFile(String mdbPath) throws IOException {
+        logger.info("解析 MDB 文件: {}", mdbPath);
+        
+        List<LayerInfo> layers = new ArrayList<>();
+        
+        try {
+            File mdbFile = new File(mdbPath);
+            if (!mdbFile.exists()) {
+                throw new IOException("MDB 文件不存在: " + mdbPath);
+            }
+            
+            if (!mdbFile.isFile()) {
+                throw new IOException("路径不是文件: " + mdbPath);
+            }
+            
+            // 使用UCanAccess连接Access数据库
+            // JDBC URL格式: jdbc:ucanaccess://文件路径
+            String jdbcUrl = "jdbc:ucanaccess://" + mdbPath.replace("\\", "/");
+            logger.debug("连接MDB数据库: {}", jdbcUrl);
+            
+            try (Connection conn = DriverManager.getConnection(jdbcUrl);
+                 Statement stmt = conn.createStatement()) {
+                
+                // 查询MSysObjects表获取所有用户表（图层）
+                // MSysObjects是Access的系统表，包含所有对象信息
+                // Type=1表示用户表，Flags=0表示非系统表
+                String querySql = 
+                    "SELECT Name, Type, Flags FROM MSysObjects " +
+                    "WHERE Type = 1 AND Flags = 0 AND Name NOT LIKE 'MSys%' AND Name NOT LIKE '~*' " +
+                    "ORDER BY Name";
+                
+                List<String> tableNames = new ArrayList<>();
+                try {
+                    ResultSet rs = stmt.executeQuery(querySql);
+                    while (rs.next()) {
+                        String tableName = rs.getString("Name");
+                        if (tableName != null && !tableName.trim().isEmpty()) {
+                            tableNames.add(tableName.trim());
+                            logger.debug("发现表/图层: {}", tableName);
+                        }
+                    }
+                    rs.close();
+                } catch (Exception e) {
+                    logger.warn("查询MSysObjects失败，尝试直接查询所有表: {}", e.getMessage());
+                    // 备用方法：直接查询所有表
+                    ResultSet tables = conn.getMetaData().getTables(null, null, null, new String[]{"TABLE"});
+                    while (tables.next()) {
+                        String tableName = tables.getString("TABLE_NAME");
+                        if (tableName != null && !tableName.startsWith("MSys") && 
+                            !tableName.startsWith("~")) {
+                            tableNames.add(tableName);
+                            logger.debug("发现表/图层: {}", tableName);
+                        }
+                    }
+                    tables.close();
+                }
+                
+                logger.info("MDB文件中发现 {} 个表/图层", tableNames.size());
+                
+                if (tableNames.isEmpty()) {
+                    logger.warn("MDB文件中未找到任何图层");
+                    return layers;
+                }
+                
+                // 为每个表创建图层信息
+                for (String tableName : tableNames) {
+                    LayerInfo layer = new LayerInfo();
+                    layer.setLayerName(tableName);
+                    layer.setFilePath(mdbPath);
+                    layer.setGeometryType("Feature Class"); // MDB中的表通常是要素类
+                    
+                    // 尝试读取要素数量
+                    try {
+                        String countSql = "SELECT COUNT(*) FROM \"" + tableName + "\"";
+                        ResultSet countRs = stmt.executeQuery(countSql);
+                        if (countRs.next()) {
+                            int count = countRs.getInt(1);
+                            layer.setFeatureCount(count);
+                            logger.debug("表 {} 有 {} 条记录", tableName, count);
+                        }
+                        countRs.close();
+                    } catch (Exception e) {
+                        logger.warn("无法读取表 {} 的记录数: {}", tableName, e.getMessage());
+                        layer.setFeatureCount(0);
+                    }
+                    
+                    // 尝试读取边界框（如果表有Shape字段）
+                    try {
+                        // 检查表是否有Shape或OGR_GEOMETRY字段
+                        ResultSet columns = conn.getMetaData().getColumns(null, null, tableName, null);
+                        boolean hasShapeField = false;
+                        while (columns.next()) {
+                            String columnName = columns.getString("COLUMN_NAME");
+                            if (columnName != null && 
+                                (columnName.equalsIgnoreCase("Shape") || 
+                                 columnName.equalsIgnoreCase("OGR_GEOMETRY"))) {
+                                hasShapeField = true;
+                                break;
+                            }
+                        }
+                        columns.close();
+                        
+                        if (hasShapeField) {
+                            // 尝试查询边界框（这需要特殊的SQL，UCanAccess可能不支持）
+                            // 暂时设置为null
+                            layer.setBbox(null);
+                        } else {
+                            layer.setBbox(null);
+                        }
+                    } catch (Exception e) {
+                        logger.debug("无法读取表 {} 的边界框: {}", tableName, e.getMessage());
+                        layer.setBbox(null);
+                    }
+                    
+                    layer.setTotalArea(0.0);
+                    
+                    layers.add(layer);
+                    logger.info("解析图层: {} - {} 个要素", tableName, layer.getFeatureCount());
+                }
+                
+            } catch (Exception e) {
+                logger.error("连接MDB数据库失败: {}", e.getMessage(), e);
+                throw new IOException("解析MDB文件失败: " + e.getMessage(), e);
+            }
+            
+        } catch (Exception e) {
+            logger.error("解析 MDB 文件失败: {}", e.getMessage(), e);
+            throw new IOException("解析 MDB 文件失败: " + e.getMessage(), e);
         }
         
         return layers;

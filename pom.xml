@@ -87,6 +87,13 @@
 		<version>3.44.1.0</version>
 	</dependency>
 	
+	<!-- UCanAccess - Access数据库JDBC驱动 (用于MDB文件解析) -->
+	<dependency>
+		<groupId>net.sf.ucanaccess</groupId>
+		<artifactId>ucanaccess</artifactId>
+		<version>5.0.1</version>
+	</dependency>
+	
 	<!-- Jackson JSON 处理 (用于 GeoJSON) -->
 	<dependency>
 		<groupId>com.fasterxml.jackson.core</groupId>
